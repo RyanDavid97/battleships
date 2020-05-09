@@ -1,4 +1,3 @@
-
 from django.http import JsonResponse
 # We will sometimes raise exceptions
 from django.core.exceptions import PermissionDenied
@@ -174,6 +173,86 @@ def api_games_add_player(request, game_name, player_name):
         return JsonResponse("Unknown error", safe=False, status=status_code)
 
 
+##### Changing the Grid Size of a game#####
+def api_games_change_grid(request, game_name, secret, maximum_x, maximum_y):
+    """Change grid size of a selected game with a player secret"""
+
+    try:
+        # Fetch the game
+        game = Game.objects.get(name=game_name)
+        if not game:
+            status_code = 404
+            response = f"Could not find game {game_name}"
+   
+        if secret != game.get_secret():
+                status_code = 403
+                response = f"Invalid Game Secret"
+  
+ # Check selected grid size is too small
+        if (game.maximum_x<10) or (game.maximum_y<10):
+            status_code = 403
+            response = "Grid Size is too small!"		 
+  
+ 
+        else:
+        # We have a player and valid secret, grid size will be entered
+            game.maximum_x = maximum_x
+            game.maximum_y = maximum_y
+            game.save()
+            status_code = 200
+            response = f"Game grid for {game_name} changed to x={maximum_x}, y={maximum_y}"
+
+    # Check if the game is already in progress
+        if game.number_of_ships():
+            status_code = 403
+            response = "Specified Game has already started"
+			
+	
+			
+        return JsonResponse(response, safe=False, status=status_code)
+
+    except:
+        status_code = 500
+        return JsonResponse("Unknown error", safe=False, status=status_code)
+
+##### Changing number of ships per person#####
+def api_games_start_game_with_custom_ships(request, game_name, ships_per_person):
+    """Generate game with custom number of ships per person"""
+
+    try:
+        # Fetch the game
+        game = Game.objects.get(name=game_name)
+        if not game:
+            status_code = 404
+            response = f"Could not find game {game_name}"
+        else:
+            # Are there ships already?
+            if game.number_of_ships():
+                # Disallow further ship generation
+                status_code = 403
+                response = "Specified Game has already started"
+            
+			#For games where Ships-Per-Person is zero
+            if game.ships_per_person <1:
+                #Prevent Game From Starting
+                status_code = 403
+                response = "A game must have at least 1 ship."
+                
+            else:
+                # Generate the ships and save the preset
+                game.start_game()
+                game.ships_per_person = ships_per_person
+                game.save()
+                status_code = 200
+                response = f"{ships_per_person} ships per player created; {game_name} started"
+				
+        return JsonResponse(response, safe=False, status=status_code)
+
+    except:
+        status_code = 500
+        return JsonResponse("Unknown error", safe=False, status=status_code)
+		
+
 def api_games_start_game(request, game_name):
     """Generate ships ready to go"""
 
@@ -194,7 +273,7 @@ def api_games_start_game(request, game_name):
                 game.start_game()
 
                 status_code = 200
-                response = f"Ships created, and game {game_name} started"
+                response = f"Default number of Ships created, and game {game_name} started"
 
         return JsonResponse(response, safe=False, status=status_code)
 
@@ -280,7 +359,7 @@ def api_games_getwinner(request, game_name):
         return JsonResponse(response, safe=False, status=status_code)
 
 
-def api_strike(request, game_name, player_name, secret, x, y):
+def api_strike_with_hp(request, game_name, player_name, secret, x, y):
     """Fetch the ships for a specific player in a specific game"""
 
     try:
@@ -323,6 +402,50 @@ def api_strike(request, game_name, player_name, secret, x, y):
         return JsonResponse(f"Unknown error: Strike game {game_name}, player {player_name}, location ({x}, {y})"
                             , safe=False, status=status_code)
 
+def api_strike(request, game_name, player_name, secret, x, y):
+    """Fetch the ships for a specific player in a specific game"""
+
+    try:
+        # Fetch the game
+        game = Game.objects.get(name=game_name)
+        if not game:
+            status_code = 404
+            response = f"Could not find game {game_name}"
+
+        # Fetch the player
+        player = Player.objects.get(name=player_name)
+        if not player:
+            status_code = 404
+            response = f"Could not find player {player_name}"
+
+        # Have we both?
+        if game and player:
+            # Check the secret
+            if secret == player.get_secret():
+                status_code = 200
+                # Get the potential action and return
+                location = (int(x),int(y))
+                # Get the text from the output
+                response = game.strike(player, location).result
+            else:
+                status_code = 403
+                response = f"Invalid secret for player {player_name}"
+
+        return JsonResponse(response, safe=False, status=status_code)
+
+    except PermissionDenied as e:
+        # The model strike code can raise exceptions, for instance, if it isn't the players turn.
+        # Return the exception as a string so the client can deduce the reason
+        status_code = 403
+        return JsonResponse(str(e), safe=False, status=status_code)
+
+    except:
+        # Anything else should be supressed for security reasons
+        status_code = 500
+        return JsonResponse(f"Unknown error: Strike game {game_name}, player {player_name}, location ({x}, {y})"
+                            , safe=False, status=status_code)	
+		
+							
 
 def index(request):
     """A main landing page."""
@@ -398,5 +521,4 @@ def view_game(request, game_name, player_name=None, secret=None):
         'yrange': range(0, game.maximum_y),
     }
     return HttpResponse(template.render(context, request))
-
 
