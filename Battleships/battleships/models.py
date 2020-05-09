@@ -177,6 +177,7 @@ class Game(models.Model):
             # Return the secret, there shouldn't be more than one, but return the first
             return game_secrets[0].secret
 
+   
 
     def start_game(self):
         """Generate ships for all players in the game"""
@@ -352,8 +353,61 @@ class Game(models.Model):
 
         return action
 
+		
+    def strike_with_hp(self, player, location):
+        """Process an attempted strike from a specified player
 
-    def number_of_ships(self, player=None):
+        player      the player to take the action
+        location    the location to strike as a tuple (x,y)
+
+        returns an Action is the strike was a valid attempt or an error string otherwise
+        """
+
+        # If the player isn't in the game, stop now
+        if player not in self.players.all():
+            raise PermissionDenied("NotInGame")
+
+        # If there are no ships, stop now
+        if not Ship.objects.all().filter(game=self).count():
+            raise PermissionDenied("NoShipsInGame")
+
+        # Get actions to date
+        all_actions = Action.objects.all().filter(game=self)
+
+        # If the current player is already a move ahead of anyone else then we should disallow this attempt
+        number_of_player_actions = all_actions.filter(player=player).count()
+        for p in self.players.all():
+            if number_of_player_actions > all_actions.filter(player=p).count():
+                raise PermissionDenied("NotYourTurn")
+
+        # Check for any hit
+        ship = self.check_for_hit(location)
+        if ship:
+            # A ship was hit!
+            result = f"hit: ship {ship.name} belonging to {ship.player.name} was hit. Remaining hp: {ship.hp}"
+            # Delete the ship from the database
+            ship.hp=ship.hp-1
+            ship.save()
+        
+        if ship.hp<=0:
+         ship.delete()
+		
+        else:
+            # It was a miss!
+            result = f"miss:"
+        
+        # Our input location is a tuple, but we need to convert it to a Location object
+        (x, y) = location
+        location_object = Location.objects.create(x=x, y=y, game=self)
+        action = Action.objects.create(game=self, player=player, location=location_object, result=result)
+
+        # Save both game and player to force modified timestamp update
+        self.save()
+        player.save()
+
+        return action
+
+    def number_of_ships(self, player=None): 
         """Return the number of active ships
 
         player      if supplied, only the ships for this player are counted, if None, all are counted
@@ -474,11 +528,10 @@ class Game(models.Model):
             "Youthful Indiscretion",
             "Flexible Demeanour",
             "Just Read The Instructions",
-            "Of Course I Still Love You",
+            "Plutonium Not Included",
             "Zealot",
             "Limiting Factor",
             "Gunboat Diplomat",
-            "Kiss My Ass",
             "Prime Mover",
             "Screw Loose",
             "Bad for Business",
@@ -509,6 +562,10 @@ class Game(models.Model):
             "Quietly Confident",
             "Sleeper Service",
             "Mistake Not...",
+            "Old Faithful",
+            "The Enterprise",
+            "Peace through Excessive Violence",
+            "'Tis to Glory We Steer",
         ]
 
         # Shuffle the list
@@ -535,7 +592,6 @@ class Game(models.Model):
 
 class Location(models.Model):
     """A grid location. Mainly used to record ship cells, and strike attempts.
-
     x       The x location
     y       The y location
     game    The game with this this is associated (for ease of cleanup)
@@ -555,12 +611,14 @@ class Ship(models.Model):
     name        A name for the ship
     game        The game in which the ship exists
     player      The Player who owns the ship
-    locations   The grid cells occupied by the ship as Location objects"""
-
+    locations   The grid cells occupied by the ship as Location objects
+    hp          The amount of hit points a ships has"""
+    
     name = models.CharField(max_length=50)
     game = models.ForeignKey(Game, on_delete=models.CASCADE)
     player = models.ForeignKey(Player, on_delete=models.CASCADE)
     locations = models.ManyToManyField(Location)
+    hp = models.IntegerField(default=3)
 
     def check_for_hit(self, location):
         """Checks if the ship is on a given location and returns True or False"""
